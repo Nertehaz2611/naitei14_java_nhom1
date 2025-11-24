@@ -1,9 +1,10 @@
 package org.example.foodanddrinkproject.controller.api;
 
 
-import org.example.foodanddrinkproject.dto.JwtAuthResponse;
-import org.example.foodanddrinkproject.dto.LoginRequest;
-import org.example.foodanddrinkproject.dto.SignUpRequest;
+import org.example.foodanddrinkproject.dto.*;
+import org.example.foodanddrinkproject.security.CustomUserDetailsService;
+import org.example.foodanddrinkproject.security.JwtTokenProvider;
+import org.example.foodanddrinkproject.security.UserPrincipal;
 import org.example.foodanddrinkproject.service.AuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -16,10 +17,15 @@ public class AuthController {
 
 
     private final AuthService authService;
+    private final JwtTokenProvider tokenProvider;
+    private final CustomUserDetailsService customUserDetailsService;
 
-
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService,
+                          JwtTokenProvider tokenProvider,
+                          CustomUserDetailsService customUserDetailsService) {
         this.authService = authService;
+        this.tokenProvider = tokenProvider;
+        this.customUserDetailsService = customUserDetailsService;
     }
 
 
@@ -36,8 +42,19 @@ public class AuthController {
 
 
     @GetMapping("/success")
-    public ResponseEntity<JwtAuthResponse> oauthLoginSuccess(@RequestParam("token") String token) {
-        // We just return the token so the user (or frontend) can grab it
-        return ResponseEntity.ok(new JwtAuthResponse(token));
+    public ResponseEntity<LoginSuccessResponse> oauthLoginSuccess(@RequestParam("token") String token) {
+        Long userId = tokenProvider.getUserIdFromJWT(token);
+
+        UserPrincipal userPrincipal = (UserPrincipal) customUserDetailsService.loadUserById(userId);
+
+        UserSummaryDto userSummary = new UserSummaryDto(
+                userPrincipal.getId(),
+                userPrincipal.getUsername(), // This returns email
+                userPrincipal.getFullName()
+        );
+
+        JwtAuthResponse tokenResponse = new JwtAuthResponse(token);
+
+        return ResponseEntity.ok(new LoginSuccessResponse(tokenResponse, userSummary));
     }
 }
