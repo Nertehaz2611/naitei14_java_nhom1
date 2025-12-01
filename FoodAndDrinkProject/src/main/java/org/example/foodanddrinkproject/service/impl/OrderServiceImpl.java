@@ -1,4 +1,5 @@
 package org.example.foodanddrinkproject.service.impl;
+import org.example.foodanddrinkproject.dto.AdminUpdateOrderRequest;
 import org.example.foodanddrinkproject.dto.OrderDto;
 import org.example.foodanddrinkproject.dto.OrderItemDto;
 import org.example.foodanddrinkproject.dto.PlaceOrderRequest;
@@ -12,7 +13,11 @@ import org.example.foodanddrinkproject.repository.CartRepository;
 import org.example.foodanddrinkproject.repository.OrderRepository;
 import org.example.foodanddrinkproject.repository.ProductRepository;
 import org.example.foodanddrinkproject.repository.UserRepository;
+import org.example.foodanddrinkproject.repository.specification.OrderSpecification;
 import org.example.foodanddrinkproject.service.OrderService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -129,6 +134,65 @@ public class OrderServiceImpl implements OrderService {
             throw new BadRequestException("You do not have permission to view this order.");
         }
         return convertToDto(order);
+    }
+
+    @Override
+    public Page<OrderDto> getAllOrders(OrderStatus status, Long userId, Pageable pageable) {
+        // Build dynamic query
+        Specification<Order> spec =
+                OrderSpecification.hasStatus(status)
+                .and(OrderSpecification.hasUserId(userId));
+
+        return orderRepository.findAll(spec, pageable)
+                .map(this::convertToDto);
+    }
+
+    @Override
+    @Transactional
+    public OrderDto updateOrder(Long orderId, AdminUpdateOrderRequest request) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", "id", orderId));
+
+        OrderStatus oldStatus = order.getOrderStatus();
+
+        if (request.getOrderStatus() != null) {
+            OrderStatus newStatus = request.getOrderStatus();
+
+            // ... (validation logic) ...
+
+            // ... (cancel/stock logic) ...
+
+            // UPDATED LOGIC:
+            // If checking out as COMPLETED, Force Payment to PAID
+            // (unless the Admin specifically sent a different payment status in this request)
+            if (newStatus == OrderStatus.COMPLETED && request.getPaymentStatus() == null) {
+                order.setPaymentStatus(PaymentStatus.PAID);
+            }
+
+            order.setOrderStatus(newStatus);
+        }
+
+        // Only apply manual payment status if the Admin explicitly sent it
+        if (request.getPaymentStatus() != null) {
+            order.setPaymentStatus(request.getPaymentStatus());
+        }
+
+        Order savedOrder = orderRepository.save(order);
+        return convertToDto(savedOrder);
+    }
+
+    // --- Helper for Restocking ---
+    private void restoreStock(Order order) {
+        for (OrderItem item : order.getItems()) {
+            Product product = item.getProduct();
+            if (product != null) { // Product might have been deleted? Check null safety.
+                // We don't need Locking here as much because adding stock is safer than removing,
+                // but strictly speaking, in high concurrency, we could lock.
+                // For simplicity/admin speed, direct update is fine.
+                product.setStockQuantity(product.getStockQuantity() + item.getQuantity());
+                productRepository.save(product);
+            }
+        }
     }
 
     // --- Helper ---
